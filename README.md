@@ -3,7 +3,9 @@
 ![Lead Radar: KPI cards and the 3D map over Stuttgart](docs/screenshot.png)
 
 A demo from the keynote "AI workflows, agents and the skills they require" at the HdM International Week 2026 (Stuttgart Media University).
-An AI coding agent (Claude Code) built this app from a single prompt. A human then checked the map in a browser, found problems, and a second agent run fixed them.
+An AI coding agent built this app from a single prompt. A second agent, the orchestrator, then opened the app in a browser, checked screenshots, found the map broken and sent it back; a second run fixed it. No human looked at it during the runs.
+
+Measured from the agent logs: build 11:44 · check by the orchestrating agent about 1:20 · fix 31:07, of which 13:20 were spent checking screenshots.
 
 Lead-scoring app for the sales team of a fictional B2B software company in Stuttgart.
 It scores ~2,000 CRM leads across 12 sales regions in Baden-Württemberg, explains every score
