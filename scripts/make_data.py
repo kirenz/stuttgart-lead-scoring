@@ -78,10 +78,7 @@ stage = np.where(converted,
                  rng.choice(["Contract", "Negotiation", "Proposal"], size=N, p=[.75, .2, .05]),
                  rng.choice(["First contact", "Qualified", "Proposal", "Lost"], size=N, p=[.3, .25, .1, .35]))
 
-PRE = ["Neckar", "Filder", "Alb", "Kraichgau", "Enz", "Rems", "Schönbuch", "Fils", "Murr", "Hohenlohe", "Gäu", "Strohgäu", "Schurwald", "Glems", "Echaz", "Ammer"]
-SUF = ["Antriebstechnik", "Präzisionsteile", "Logistik", "Medizintechnik", "Steuerungen", "Kunststofftechnik", "Elektronik", "Werkzeugbau", "Anlagenbau", "Handelshaus", "Sensorik", "Systemtechnik"]
-FORM = ["GmbH", "GmbH & Co. KG", "AG", "KG"]
-company = [f"{rng.choice(PRE)} {rng.choice(SUF)} {rng.choice(FORM, p=[.6, .25, .05, .1])}" for _ in range(N)]
+company = [f"Fictional Co. #{n:04d}" for n in range(1, N + 1)]
 cities = {r: r if r not in ("Rems-Murr",) else "Waiblingen" for r in REGIONS}
 df = pd.DataFrame({
     "lead_id": [f"L{n:05d}" for n in range(1, N + 1)], "company": company,
