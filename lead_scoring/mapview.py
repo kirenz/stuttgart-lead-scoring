@@ -13,7 +13,17 @@ from .geo import HQ, Route
 from .theme import ACCENT, BG, LAVENDER, MUTED, SURFACE, TEXT, score_hex, score_rgb
 
 H3_RES = 6                     # cells of about 36 km²
+HEX_COVERAGE = 0.4             # thin columns with wide gaps, so the basemap shows between them
+HEX_ELEVATION = 100            # metres per expected deal
+HEX_ALPHA = (35, 150)          # opacity rises with expected deals: weak areas fade into the basemap
 SCORE_LO, SCORE_HI = 8, 45     # colour range of the mean score per cell
+PX = "'pixels'"                # pydeck turns bare strings into expressions; quoted, it stays the unit name
+
+# pydeck's widget renders Carto with a bundled Mapbox GL v1, which no longer draws the current Carto
+# style. So the deck has no basemap of its own; MapLibre draws Carto dark-matter below and follows the deck.
+BASEMAP_STYLE = pdk.map_styles.CARTO_DARK
+MAX_TILE_ZOOM = 7              # higher zooms reuse zoom-7 tiles: far fewer downloads, enough detail as a backdrop
+MAPLIBRE_JS = "https://unpkg.com/maplibre-gl@5.14.0/dist/maplibre-gl.js"
 
 STUTTGART_VIEW = dict(latitude=48.74, longitude=9.20, zoom=9.1, pitch=45, bearing=-18)
 START_VIEW = dict(latitude=48.55, longitude=9.05, zoom=6.4, pitch=0, bearing=0)
@@ -46,7 +56,9 @@ def hex_cells(leads: pd.DataFrame) -> pd.DataFrame:
     cells = leads.assign(hex=[h3.latlng_to_cell(a, b, H3_RES) for a, b in zip(leads["lat"], leads["lon"])])
     agg = cells.groupby("hex").agg(n=("score", "size"), mean=("score", "mean"), expected=("score", "sum"))
     agg["expected"] /= 100
-    agg["color"] = [score_rgb(score_t(s)) + [215] for s in agg["mean"]]
+    weight = np.clip(agg["expected"] / agg["expected"].quantile(0.9), 0, 1)
+    alpha = HEX_ALPHA[0] + (HEX_ALPHA[1] - HEX_ALPHA[0]) * weight
+    agg["color"] = [score_rgb(score_t(s)) + [int(a)] for s, a in zip(agg["mean"], alpha)]
     agg["tip"] = [f"<div style='font-weight:600'>Area of {n} lead{'s' if n > 1 else ''}</div>"
                   f"<div>Average score <b>{m:.0f}</b></div><div>Expected deals <b>{e:.1f}</b></div>"
                   for n, m, e in zip(agg["n"], agg["mean"], agg["expected"])]
@@ -66,12 +78,12 @@ def build_deck(area_leads: pd.DataFrame, top: pd.DataFrame, customers: pd.DataFr
 
     layers = [
         pdk.Layer("H3HexagonLayer", hex_cells(area_leads), id="hex", get_hexagon="hex",
-                  get_fill_color="color", get_elevation="expected", elevation_scale=750,
-                  extruded=True, coverage=0.88, pickable=True, auto_highlight=True,
+                  get_fill_color="color", get_elevation="expected", elevation_scale=HEX_ELEVATION,
+                  extruded=True, coverage=HEX_COVERAGE, pickable=True, auto_highlight=True,
                   highlight_color=[255, 255, 255, 60], material={"ambient": 0.55, "diffuse": 0.6, "shininess": 40}),
         pdk.Layer("ScatterplotLayer", cust, id="customers", get_position=["lon", "lat"],
                   get_fill_color=lav + [230], get_line_color=lav + [90], line_width_min_pixels=5,
-                  stroked=True, get_radius=3, radius_units="pixels", pickable=True),
+                  stroked=True, get_radius=3, radius_units=PX, pickable=True),
         pdk.Layer("ArcLayer", top, id="arcs", get_source_position=["cust_lon", "cust_lat"],
                   get_target_position=["lon", "lat"], get_source_color=lav + [200],
                   get_target_color="color", get_width=2, get_height=0.6, great_circle=False),
@@ -81,9 +93,9 @@ def build_deck(area_leads: pd.DataFrame, top: pd.DataFrame, customers: pd.DataFr
         top[f"glow{i}"] = [c + [a] for c in top["color"]]
         layers.append(pdk.Layer("ScatterplotLayer", top, id=f"glow{i}", get_position=["lon", "lat"],
                                 get_fill_color=f"glow{i}", get_radius=r,
-                                radius_units="pixels", pickable=(i == 2)))
+                                radius_units=PX, pickable=(i == 2)))
     layers.append(pdk.Layer("ScatterplotLayer", top, id="core", get_position=["lon", "lat"],
-                            get_fill_color=[255, 255, 255, 235], get_radius=2, radius_units="pixels"))
+                            get_fill_color=[255, 255, 255, 235], get_radius=2, radius_units=PX))
 
     if route is not None:
         path = pd.DataFrame([{"path": route.path}])
@@ -93,25 +105,24 @@ def build_deck(area_leads: pd.DataFrame, top: pd.DataFrame, customers: pd.DataFr
                                                                 route.stops.iterrows())])
         layers += [
             pdk.Layer("PathLayer", path, id="route-glow", get_path="path", get_color=acc + [55],
-                      get_width=16, width_units="pixels", joint_rounded=True, cap_rounded=True),
+                      get_width=16, width_units=PX, joint_rounded=True, cap_rounded=True),
             pdk.Layer("PathLayer", path, id="route", get_path="path", get_color=acc + [255],
-                      get_width=4, width_units="pixels", joint_rounded=True, cap_rounded=True),
+                      get_width=4, width_units=PX, joint_rounded=True, cap_rounded=True),
             pdk.Layer("ScatterplotLayer", stops, id="stops", get_position=["lon", "lat"],
                       get_fill_color=acc + [255], get_line_color=[24, 25, 38, 255], stroked=True,
-                      line_width_min_pixels=2, get_radius=11, radius_units="pixels", pickable=True),
+                      line_width_min_pixels=2, get_radius=11, radius_units=PX, pickable=True),
             pdk.Layer("TextLayer", stops, id="stop-labels", get_position=["lon", "lat"], get_text="label",
                       get_color=[24, 25, 38, 255], get_size=13, font_weight=800,
-                      font_family="Inter, sans-serif", get_alignment_baseline="'center'"),
+                      font_family="'Inter, sans-serif'", get_alignment_baseline="'center'"),
         ]
     layers.append(pdk.Layer("ScatterplotLayer", hq, id="hq", get_position=["lon", "lat"],
                             get_fill_color=[24, 25, 38, 255], get_line_color=acc + [255], stroked=True,
-                            line_width_min_pixels=3, get_radius=9, radius_units="pixels", pickable=True))
+                            line_width_min_pixels=3, get_radius=9, radius_units=PX, pickable=True))
 
     return pdk.Deck(
         layers=layers,
         initial_view_state=pdk.ViewState(**START_VIEW),
-        map_provider="carto",
-        map_style=pdk.map_styles.CARTO_DARK,
+        map_provider=None,
         tooltip={"html": "{tip}", "style": {
             "backgroundColor": SURFACE, "color": TEXT, "fontFamily": "Inter, sans-serif", "fontSize": "13px",
             "border": "1px solid rgba(202,211,245,.12)", "borderRadius": "12px", "padding": "10px 12px",
@@ -122,24 +133,82 @@ def build_deck(area_leads: pd.DataFrame, top: pd.DataFrame, customers: pd.DataFr
 FLY_IN = """
 <script>
 (function () {
-  const target = __TARGET__;
-  const go = () => {
+  const start = __START__, target = __TARGET__;
+  // MapLibre drops worker messages whose origin differs from the page's. Streamlit serves this page as
+  // about:srcdoc (origin "null"), but a blob worker gets the app's origin, so no tile ever arrives.
+  // A worker started from a data URL has the origin "null" too.
+  const worker = location.origin !== 'null' ? Promise.resolve() : fetch(maplibregl.getWorkerUrl())
+    .then(r => r.text()).then(code => maplibregl.setWorkerUrl('data:text/javascript,' + encodeURIComponent(code)));
+  // Carto tiles are large (150 to 400 kB). Capping the tile zoom (MapLibre over-zooms beyond it) cuts the
+  // download to a few tiles per view, so the glyphs that every tile waits for are not starved.
+  const style = fetch(__STYLE__).then(r => r.json()).then(s => {
+    Object.values(s.sources).forEach(src => { src.maxzoom = Math.min(src.maxzoom || 22, __MAX_TILE_ZOOM__); });
+    // labels wait for their glyphs, so fetch the Latin glyphs before the tiles compete for bandwidth
+    const stacks = new Set(s.layers.map(l => l.layout && l.layout['text-font']).filter(Array.isArray).map(f => f.join(',')));
+    stacks.forEach(f => fetch(s.glyphs.replace('{fontstack}', encodeURI(f)).replace('{range}', '0-255')).catch(() => {}));
+    return s;
+  });
+  const basemap = (s, id, view, options) => {
+    const holder = document.createElement('div');
+    holder.id = id;
+    document.body.insertBefore(holder, document.body.firstChild);
+    return new maplibregl.Map(Object.assign({
+      container: holder, style: s, interactive: false, fadeDuration: 0,
+      cancelPendingTileRequestsWhileZooming: false,   // keep loading tiles during the flight
+      center: [view.longitude, view.latitude], zoom: view.zoom, pitch: view.pitch, bearing: view.bearing,
+    }, options));
+  };
+  let map = null, preload = null;
+
+  // the basemap follows every frame of the deck camera
+  let last = '';
+  const sync = () => {
+    try {
+      const v = deckInstance.getViewports()[0];
+      const key = v && [v.longitude, v.latitude, v.zoom, v.pitch, v.bearing].join();
+      if (map && v && key !== last) {
+        last = key;
+        map.jumpTo({center: [v.longitude, v.latitude], zoom: v.zoom, pitch: v.pitch, bearing: v.bearing});
+      }
+    } catch (e) {}
+    requestAnimationFrame(sync);
+  };
+  requestAnimationFrame(sync);
+
+  // fly in once the deck runs and the basemap has drawn the start view (at the latest after 3 s),
+  // otherwise the flight is over before anyone sees it
+  let flown = false;
+  const fly = () => {
+    if (flown) return;
+    if (!deckInstance.isInitialized) { setTimeout(fly, 100); return; }
+    flown = true;
     const D = window.deck || {};
-    const interp = D.FlyToInterpolator ? new D.FlyToInterpolator({speed: 0.5}) : undefined;
     deckInstance.setProps({initialViewState: Object.assign({}, target, {
       transitionDuration: __DURATION__,
-      transitionInterpolator: interp,
+      transitionInterpolator: D.FlyToInterpolator ? new D.FlyToInterpolator() : undefined,
       transitionEasing: t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2,
     })});
+    setTimeout(() => map && map.once('idle', () => preload && preload.remove()), __DURATION__);
   };
-  setTimeout(go, 700);
+  setTimeout(fly, 3000);
+
+  Promise.all([style, worker]).then(([s]) => {
+    map = basemap(s, 'basemap', start, {attributionControl: {compact: true}});
+    // a hidden map at the target view fetches the final tiles during the flight, so the visible map finds
+    // them in the browser cache; it starts once the sprite is cached
+    map.once('load', () => { preload = basemap(s, 'basemap-preload', target, {attributionControl: false}); });
+    map.once('idle', () => setTimeout(fly, 800));
+  });
 })();
 </script>
 """
 
 PAGE_CSS = f"""<style>
 html, body {{ margin:0; padding:0; background:{BG}; height:100%; overflow:hidden; }}
-#deck-container {{ position:absolute; inset:0; }}
+#basemap, #basemap-preload {{ position:absolute; inset:0; }}
+#basemap-preload {{ opacity:0; pointer-events:none; }}
+#deck-container {{ position:absolute; inset:0; z-index:1; }}
+.maplibregl-control-container {{ position:relative; z-index:2; }}
 .deck-tooltip {{ line-height:1.35; }}
 .maplibregl-ctrl-attrib, .mapboxgl-ctrl-attrib {{ background:rgba(24,25,38,.6) !important; }}
 .maplibregl-ctrl-attrib a, .mapboxgl-ctrl-attrib a {{ color:#6e738d !important; }}
@@ -148,9 +217,11 @@ html, body {{ margin:0; padding:0; background:{BG}; height:100%; overflow:hidden
 
 def deck_html(deck: pdk.Deck, view: dict, duration_ms: int = 5200) -> str:
     """Standalone page: starts over Baden-Württemberg and flies into `view`."""
-    page = deck.to_html(as_string=True, notebook_display=False, css_background_color=BG)
-    page = page.replace("</head>", PAGE_CSS + "</head>", 1)
-    script = FLY_IN.replace("__TARGET__", json.dumps(view)).replace("__DURATION__", str(int(duration_ms)))
+    page = deck.to_html(as_string=True, notebook_display=False, css_background_color="transparent")
+    page = page.replace("</head>", f'<script src="{MAPLIBRE_JS}"></script>' + PAGE_CSS + "</head>", 1)
+    script = (FLY_IN.replace("__START__", json.dumps(START_VIEW)).replace("__TARGET__", json.dumps(view))
+              .replace("__STYLE__", json.dumps(BASEMAP_STYLE)).replace("__MAX_TILE_ZOOM__", str(MAX_TILE_ZOOM))
+              .replace("__DURATION__", str(int(duration_ms))))
     return page.replace("</html>", script + "</html>")
 
 
